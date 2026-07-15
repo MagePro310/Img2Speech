@@ -1,0 +1,16 @@
+# secrets — never commit the real key
+.env
+
+# python / uv
+.venv/
+__pycache__/
+*.pyc
+
+# generated audio & transcripts (outputs of the scripts)
+*.mp4
+*.wav
+*.pcm
+*.aac
+*.m4a
+*.txt
+/f
