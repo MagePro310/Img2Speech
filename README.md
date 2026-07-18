@@ -5,19 +5,25 @@ read aloud with an OpenAI vision model for OCR and OpenAI TTS for the voice.
 Built as the software for a Raspberry Pi reading device: snap a photo, hear
 the text a few seconds later.
 
-## The three tools
+## The four tools
 
 | Script | Purpose | Output |
 |---|---|---|
 | `ocr_to_speech.py` | **Batch converter** — archive chapters as audio files | one `.mp4` (audio-only, AAC) + `.txt` transcript per image |
 | `read_aloud.py` | **Live reader** — the device engine; speech starts ~3s after the photo | audio played directly through `aplay` (or any PCM player) |
-| `serve_reader.py` | **Browser test page** — hear the live reader from a laptop when the host has no speakers | streaming WAV played in the browser via a forwarded port |
+| `device_reader.py` | **Three-button Pi controller** — capture, resumable reading, summary, and questions | continuous GPIO-driven audio |
+| `serve_reader.py` | **Browser simulator** — test the same three-button workflow with a camera/file picker and microphone | streaming WAV plus the latest question/answer |
+
+The persistent controller speaks one OCR sentence at a time. If it is
+interrupted, its cursor stays at that sentence, so Button 1 resumes from the
+start of the interrupted sentence. OCR continues in the background while a
+summary or question is being handled.
 
 ## Setup
 
 Requires [uv](https://docs.astral.sh/uv/) (it fetches its own Python; system
-Python is not used). Dependencies (`openai`, `imageio-ffmpeg`, `python-dotenv`)
-are declared in `pyproject.toml`:
+Python is not used). Dependencies (`openai`, `imageio-ffmpeg`, `python-dotenv`,
+`gpiozero`) are declared in `pyproject.toml`:
 
 ```bash
 uv sync
@@ -45,13 +51,49 @@ uv run read_aloud.py photo.jpg
 # Live without a sound device (testing): capture raw PCM instead
 uv run read_aloud.py photo.jpg --pcm-out out.pcm
 
-# Browser test: serve a click-to-listen page, then open http://localhost:8765
+# Raspberry Pi: stop and summarize with a button on BCM GPIO 17
+uv run read_aloud.py photo.jpg --summary-button-pin
+
+# Use a different BCM pin
+uv run read_aloud.py photo.jpg --summary-button-pin 27
+
+# Persistent Raspberry Pi reader (example GPIO pins and wrapper commands)
+uv run device_reader.py \
+  --button1-pin 17 --button2-pin 27 --button3-pin 22 \
+  --capture-command 'camera-wrapper --output {output}' \
+  --record-command 'recorder-wrapper --output {output}'
+
+# Three-button browser simulator, then open http://localhost:8765
 uv run serve_reader.py
 ```
 
-Common flags on all three: `--voice` (default `onyx`, deep male),
+Common model flags where applicable: `--voice` (default `onyx`, deep male),
 `--ocr-model` (default `gpt-4o` for batch, `gpt-4o-mini` for live),
 `--tts-model` (default `gpt-4o-mini-tts`).
+
+The interactive readers accept `--summary-model` (default `gpt-4o-mini`).
+`device_reader.py` and `serve_reader.py` also accept `--stt-model` (default
+`gpt-4o-mini-transcribe`) and `--qa-model` (default `gpt-4o-mini`). Each
+question sends only the original text heard so far and the current recognized
+question. Previous questions and answers are never sent to the model.
+
+On the browser page:
+
+- Button 1 opens the camera/file picker when a new image is needed; otherwise
+  it resumes the current image.
+- Button 2 stops the current audio and creates a new summary from all original
+  sentences heard completely so far. The first interrupted sentence is used
+  as a fallback when no sentence has finished.
+- Button 3 starts microphone recording; press it again to stop, transcribe, and
+  answer using only the text heard from the current image.
+
+JPEG/JPG and PNG uploads are supported and limited to 20 MiB. Browser sessions live in memory only, and the
+server retains at most 32 sessions.
+
+The browser simulator exposes `POST /button/1`, `/button/2`, `/button/3`,
+`GET /audio`, and `GET /status`, all keyed by the `sid` query parameter.
+Button 1 accepts JPEG or PNG data for a new image or an empty body to resume. Button 3
+uses an empty body to begin recording and WAV, WebM, or Ogg data to finish it.
 
 ## How the live streaming works
 
@@ -94,10 +136,16 @@ The batch script instead maximizes archive quality: full OCR, then TTS in
 re-encoding into an audio-only `.mp4` (ffmpeg comes bundled via
 `imageio-ffmpeg` — no system install).
 
-`serve_reader.py` reuses `segment_worker`/`tts_worker` unchanged and pipes
-the same PCM into an HTTP response with a WAV header of unknown length,
-which browsers play progressively. It binds to `127.0.0.1` only; reach it
-through VS Code port forwarding (Ports panel → forward `8765`).
+`serve_reader.py` uses the persistent sentence-level controller and pipes PCM
+into an HTTP response with a WAV header of unknown length, which browsers play
+progressively. It binds to `127.0.0.1` only; reach it through VS Code port
+forwarding (Ports panel → forward `8765`).
+
+In the persistent controller, each TTS request corresponds to one OCR sentence.
+Interrupting playback cancels that audio generation but leaves OCR running.
+Only a fully completed sentence advances the cursor; if the first sentence is
+interrupted, it is still available as the summary/question fallback. Loading a
+new image is the only action that cancels and replaces the OCR session.
 
 ## Model choice & cost
 
@@ -116,7 +164,18 @@ through VS Code port forwarding (Ports panel → forward `8765`).
 1. Copy this folder (including `.env`) to the Pi and install uv; `uv sync`
    fetches an ARM Python automatically.
 2. `aplay` ships with Raspberry Pi OS — verify the speaker with `aplay -l`.
-3. Wire your camera/button to run `uv run read_aloud.py <photo>` per shot.
-   A different audio player can be substituted with
+3. Connect three momentary buttons from three distinct BCM GPIO pins to GND.
+   All inputs use internal pull-ups and 100 ms debounce, so no external
+   resistors are required. GPIO numbers are mandatory; there are no defaults.
+4. Provide capture and recording wrapper commands. They are parsed with
+   `shlex` and executed directly, never through a shell. Each must contain the
+   literal `{output}` placeholder. Capture must create a JPEG within 30 seconds;
+   recording must create a WAV. Recording stops on the second Button 3 press
+   (SIGINT, then terminate/kill fallback) or automatically after 60 seconds.
+5. Start the controller with the `device_reader.py` command shown above.
+   Button 1 captures/reads or resumes, Button 2 stops/summarizes, and Button 3
+   toggles a question recording. One local beep marks recording start, two mark
+   recording stop, and a separate low pattern reports errors.
+6. A different audio player can be substituted with
    `--player "mpv --demuxer=rawaudio ..."` etc. (it must accept raw PCM on
    stdin).

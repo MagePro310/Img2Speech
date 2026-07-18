@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "OCR images with an OpenAI vision model and read them aloud via OpenAI TTS"
 requires-python = ">=3.10"
 dependencies = [
+    "gpiozero>=2.0",
     "openai>=2",
     "imageio-ffmpeg>=0.5",
     "python-dotenv>=1.0",
