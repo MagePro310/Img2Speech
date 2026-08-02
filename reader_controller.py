@@ -155,6 +155,15 @@ class ReaderController:
                 with self.session.condition:
                     self.session.condition.notify_all()
 
+    def discard_image(self):
+        """Cancel and forget the current document before capturing a new one."""
+        with self.lock:
+            self.close()
+            self.session = None
+            self.current_task = None
+            self.last_reading_task = None
+            self.state = ReaderState.IDLE
+
     def _start_ocr(self, session):
         threading.Thread(target=self._ocr_worker, args=(session,), daemon=True).start()
 
@@ -244,13 +253,17 @@ class ReaderController:
             summary = summarize_text(self.client, self.summary_model, source)
         except Exception:
             with self.lock:
-                if operation == self.generation:
-                    self.state = ReaderState.PAUSED
+                if (operation != self.generation
+                        or self.state != ReaderState.SUMMARIZING):
+                    return None
+                self.state = ReaderState.PAUSED
             raise
         if not summary:
             with self.lock:
-                if operation == self.generation:
-                    self.state = ReaderState.PAUSED
+                if (operation != self.generation
+                        or self.state != ReaderState.SUMMARIZING):
+                    return None
+                self.state = ReaderState.PAUSED
             raise ReaderError("The summary model returned no text.")
         with self.lock:
             if operation != self.generation or self.state != ReaderState.SUMMARIZING:
@@ -284,13 +297,17 @@ class ReaderController:
             question = transcribe_question(self.client, self.stt_model, audio_path)
         except Exception:
             with self.lock:
-                if operation == self.generation:
-                    self.state = ReaderState.PAUSED
+                if (operation != self.generation
+                        or self.state != ReaderState.PROCESSING_QUESTION):
+                    return None
+                self.state = ReaderState.PAUSED
             raise
         if not question:
             with self.lock:
-                if operation == self.generation:
-                    self.state = ReaderState.PAUSED
+                if (operation != self.generation
+                        or self.state != ReaderState.PROCESSING_QUESTION):
+                    return None
+                self.state = ReaderState.PAUSED
             raise ReaderError("No question was recognized.")
         with self.lock:
             if operation != self.generation or self.state != ReaderState.PROCESSING_QUESTION:
@@ -299,13 +316,17 @@ class ReaderController:
             answer = answer_question(self.client, self.qa_model, source, question)
         except Exception:
             with self.lock:
-                if operation == self.generation:
-                    self.state = ReaderState.PAUSED
+                if (operation != self.generation
+                        or self.state != ReaderState.PROCESSING_QUESTION):
+                    return None
+                self.state = ReaderState.PAUSED
             raise
         if not answer:
             with self.lock:
-                if operation == self.generation:
-                    self.state = ReaderState.PAUSED
+                if (operation != self.generation
+                        or self.state != ReaderState.PROCESSING_QUESTION):
+                    return None
+                self.state = ReaderState.PAUSED
             raise ReaderError("The question model returned no answer.")
         with self.lock:
             if operation != self.generation or self.state != ReaderState.PROCESSING_QUESTION:
@@ -392,9 +413,10 @@ class ReaderController:
                         self._finish_aux_task(task)
         except Exception:
             with self.lock:
-                if task.generation == self.generation:
-                    self.current_task = None
-                    self.state = ReaderState.ERROR
+                if task.cancel_event.is_set() or task.generation != self.generation:
+                    return
+                self.current_task = None
+                self.state = ReaderState.ERROR
             raise
 
     def _iter_notice(self, task, event, count_timeline=False):

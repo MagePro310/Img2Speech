@@ -14,11 +14,11 @@ Phần cứng tối thiểu:
 - Loa USB, HDMI, jack audio hoặc audio HAT tương thích ALSA.
 - Ba nút nhấn thường mở (momentary, normally open).
 
-Ví dụ ánh xạ chân dùng trong tài liệu:
+Ánh xạ chân mặc định của chương trình:
 
 | Chức năng | GPIO BCM | Chân vật lý | Đầu còn lại |
 |---|---:|---:|---|
-| Button 1 — chụp/đọc tiếp | GPIO 17 | Pin 11 | GND |
+| Button 1 — chụp/đọc tiếp; giữ để đổi trang | GPIO 17 | Pin 11 | GND |
 | Button 2 — dừng/tóm tắt | GPIO 27 | Pin 13 | GND |
 | Button 3 — hỏi/hoàn tất câu hỏi | GPIO 22 | Pin 15 | GND |
 | Mass chung | GND | Pin 6 | Ba nút có thể dùng chung |
@@ -112,17 +112,18 @@ vào lệnh chạy thật hoặc service systemd ở phần 7.
 
 ## 4. Chạy chương trình ba nút
 
-Lệnh khuyến nghị với các chân trong sơ đồ:
+Lệnh khuyến nghị với các chân mặc định trong sơ đồ:
 
 ```bash
 cd /home/pi/Img2Speech
 uv run device_reader.py \
-  --button1-pin 17 \
-  --button2-pin 27 \
-  --button3-pin 22 \
   --capture-command 'rpicam-still --nopreview --timeout 1500 --output {output}' \
   --record-command 'arecord -q -t wav -f S16_LE -r 16000 -c 1 {output}'
 ```
+
+Không cần truyền tham số GPIO cho sơ đồ mặc định: Button 1 dùng BCM 17,
+Button 2 dùng BCM 27 và Button 3 dùng BCM 22. Muốn đổi chân, truyền
+`--button1-pin`, `--button2-pin` và `--button3-pin`; ba giá trị phải khác nhau.
 
 Giữ nguyên chuỗi `{output}` trong cả hai command. Chương trình thay chuỗi này
 bằng file tạm, tách tham số bằng `shlex` và không chạy qua shell.
@@ -138,7 +139,6 @@ Ví dụ chọn thiết bị ALSA cụ thể:
 
 ```bash
 uv run device_reader.py \
-  --button1-pin 17 --button2-pin 27 --button3-pin 22 \
   --capture-command 'rpicam-still --nopreview --timeout 1500 --output {output}' \
   --record-command 'arecord -q -D plughw:CARD=Device,DEV=0 -t wav -f S16_LE -r 16000 -c 1 {output}' \
   --player 'aplay -q -D plughw:CARD=Device,DEV=0 -f S16_LE -r 24000 -c 1 -t raw -'
@@ -148,6 +148,11 @@ uv run device_reader.py \
 
 ### Button 1 — chụp ảnh hoặc đọc tiếp
 
+- Nhấn ngắn giữ hành vi hiện tại: chụp ảnh khi cần trang mới hoặc đọc tiếp trang
+  đang dở sau khi tóm tắt/trả lời.
+- Nhấn giữ khoảng 1,5 giây ở bất kỳ trạng thái nào: dừng audio/ghi âm, hủy và xóa
+  trang hiện tại, chụp ảnh mới rồi tự động OCR và đọc từ đầu. Khi nhả nút, hệ
+  thống không đồng thời thực hiện thao tác nhấn ngắn.
 - Khi chưa có ảnh: loa báo “Đang chụp ảnh”, chụp JPEG, báo “Đang xử lý
   ảnh”, OCR, rồi báo “Bắt đầu đọc” trước câu đầu tiên.
 - Khi đang đọc: hủy ảnh hiện tại, chụp ảnh mới và đọc từ đầu ảnh mới.
@@ -209,6 +214,8 @@ Thực hiện theo thứ tự:
    nội dung.
 6. Hỏi hai câu liên tiếp và xác nhận câu thứ hai không phụ thuộc hội thoại cũ.
 7. Đọc hết ảnh rồi nhấn Button 1: camera phải chụp ảnh mới.
+8. Sau khi tóm tắt hoặc trả lời, nhấn giữ Button 1 khoảng 1,5 giây: xác nhận
+   camera chụp trang mới và trang cũ không được đọc tiếp khi nhả nút.
 
 ## 7. Tự chạy khi Raspberry Pi khởi động
 

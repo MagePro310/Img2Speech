@@ -48,6 +48,18 @@ class ReaderControllerTests(unittest.TestCase):
         self.assertEqual(DEFAULT_VOICE, "marin")
         self.assertEqual(self.controller.voice, DEFAULT_VOICE)
 
+    def test_discard_image_cancels_and_forgets_the_current_page(self):
+        task = self.load_sentences()
+        session = self.controller.session
+
+        self.controller.discard_image()
+
+        self.assertTrue(task.cancel_event.is_set())
+        self.assertTrue(session.ocr_cancel.is_set())
+        self.assertIsNone(self.controller.session)
+        self.assertIsNone(self.controller.last_reading_task)
+        self.assertEqual(self.controller.state, reader_controller.ReaderState.IDLE)
+
     def load_sentences(self, deltas=("Câu một. ", "Câu hai.")):
         with patch("reader_controller.stream_ocr", return_value=iter(deltas)):
             task = self.controller.load_image(Path("sample_input.jpg"))
@@ -155,6 +167,30 @@ class ReaderControllerTests(unittest.TestCase):
         self.assertEqual(result, [None])
         self.assertEqual(self.controller.state, reader_controller.ReaderState.READING)
         self.assertEqual(self.controller.current_task, resume_task)
+
+    def test_discarded_page_suppresses_stale_model_and_audio_errors(self):
+        reading_task = self.load_sentences()
+        with patch("reader_controller.stream_tts", return_value=iter([b"pcm"])):
+            list(self.controller.iter_audio(reading_task))
+
+        def stale_summary(*args):
+            self.controller.discard_image()
+            raise RuntimeError("old summary failed")
+
+        with patch("reader_controller.summarize_text", side_effect=stale_summary):
+            self.assertIsNone(self.controller.button2())
+        self.assertEqual(self.controller.state, reader_controller.ReaderState.IDLE)
+
+        reading_task = self.load_sentences()
+
+        def stale_audio():
+            self.controller.discard_image()
+            raise RuntimeError("old audio failed")
+            yield  # pragma: no cover - makes this a generator
+
+        with patch("reader_controller.stream_tts", return_value=stale_audio()):
+            self.assertEqual(list(self.controller.iter_audio(reading_task)), [])
+        self.assertEqual(self.controller.state, reader_controller.ReaderState.IDLE)
 
     def test_web_progress_rewinds_buffered_audio_and_resumes_after_answer(self):
         reading_task = self.load_sentences()
@@ -398,6 +434,70 @@ class SpokenNoticeTests(unittest.TestCase):
 
 
 class DeviceHelpersTests(unittest.TestCase):
+    def test_button1_short_and_long_press_emit_one_action_each(self):
+        events = queue.Queue()
+        button = SimpleNamespace()
+        device_reader.configure_button1_gestures(button, events)
+
+        self.assertEqual(
+            button.hold_time, device_reader.BUTTON1_NEW_IMAGE_HOLD_SECONDS
+        )
+        self.assertFalse(button.hold_repeat)
+
+        button.when_pressed()
+        button.when_released()
+        self.assertEqual(events.get_nowait(), ("button", 1))
+        button.when_held()  # A late hold callback must not add a second action.
+        with self.assertRaises(queue.Empty):
+            events.get_nowait()
+
+        button.when_pressed()
+        button.when_held()
+        button.when_held()  # hold_repeat is false, but also guard duplicate callbacks.
+        button.when_released()
+        self.assertEqual(events.get_nowait(), ("new_image",))
+        with self.assertRaises(queue.Empty):
+            events.get_nowait()
+
+    def test_device_dispatches_force_new_image_and_ignores_stale_record_timeout(self):
+        reader = object.__new__(device_reader.DeviceReader)
+        reader.handle_button1 = MagicMock()
+        reader.handle_button2 = MagicMock()
+        reader.handle_button3 = MagicMock()
+        reader.new_image = MagicMock()
+        reader.controller = SimpleNamespace(state=reader_controller.ReaderState.RECORDING)
+        reader.recording_token = 3
+
+        reader.dispatch_event(("new_image",))
+        reader.new_image.assert_called_once_with()
+
+        reader.dispatch_event(("record_timeout", 2))
+        reader.handle_button3.assert_not_called()
+        reader.dispatch_event(("record_timeout", 3))
+        reader.handle_button3.assert_called_once_with()
+
+    def test_default_gpio_mapping_can_be_overridden(self):
+        required = [
+            "--capture-command", "camera {output}",
+            "--record-command", "record {output}",
+        ]
+        defaults = device_reader.build_parser().parse_args(required)
+        self.assertEqual(
+            (defaults.button1_pin, defaults.button2_pin, defaults.button3_pin),
+            (17, 27, 22),
+        )
+
+        custom = device_reader.build_parser().parse_args([
+            *required,
+            "--button1-pin", "5",
+            "--button2-pin", "6",
+            "--button3-pin", "13",
+        ])
+        self.assertEqual(
+            (custom.button1_pin, custom.button2_pin, custom.button3_pin),
+            (5, 6, 13),
+        )
+
     def test_command_requires_output_placeholder(self):
         with self.assertRaises(reader_controller.ReaderError):
             device_reader.command_args("camera --fixed", Path("x.jpg"))
@@ -446,6 +546,7 @@ class DeviceHelpersTests(unittest.TestCase):
         reader.args = SimpleNamespace(max_record_seconds=60)
         reader.workdir = SimpleNamespace(name=tempfile.gettempdir())
         reader.record_timer = None
+        reader.recording_token = 0
         order = []
         reader.stop_player = lambda: order.append("stop_player")
         reader.speak_notice = lambda event: order.append(event)
@@ -459,7 +560,9 @@ class DeviceHelpersTests(unittest.TestCase):
         order.clear()
         reader.controller.state = reader_controller.ReaderState.RECORDING
         reader.record_timer = timer
-        reader.recorder.stop.side_effect = lambda: order.append("recorder_stop") or Path("q.wav")
+        reader.recorder.stop.side_effect = (
+            lambda discard=False: order.append("recorder_stop") or Path("q.wav")
+        )
         reader.async_call = lambda label, fn: order.append("start_stt")
         reader.handle_button3()
         self.assertEqual(order, ["recorder_stop", "record_stop", "start_stt"])

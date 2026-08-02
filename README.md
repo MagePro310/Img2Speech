@@ -61,9 +61,8 @@ uv run read_aloud.py photo.jpg --summary-button-pin
 # Use a different BCM pin
 uv run read_aloud.py photo.jpg --summary-button-pin 27
 
-# Persistent Raspberry Pi reader (example GPIO pins and wrapper commands)
+# Persistent Raspberry Pi reader (defaults: Button 1/2/3 = BCM 17/27/22)
 uv run device_reader.py \
-  --button1-pin 17 --button2-pin 27 --button3-pin 22 \
   --capture-command 'camera-wrapper --output {output}' \
   --record-command 'recorder-wrapper --output {output}'
 
@@ -94,6 +93,11 @@ On the browser page:
   as a fallback when no sentence has finished.
 - Button 3 starts microphone recording; press it again to stop, transcribe, and
   answer using only the text heard from the current image.
+
+On the Raspberry Pi, press Button 1 briefly to keep its normal capture/resume
+behavior. Hold Button 1 for 1.5 seconds to discard the current page in any state,
+capture a new page, and start reading it automatically. The long press emits only
+the new-page action; releasing the button does not also resume the discarded page.
 
 JPEG/JPG and PNG uploads are supported and limited to 20 MiB. Browser sessions live in memory only, and the
 server retains at most 32 sessions.
@@ -180,7 +184,9 @@ microphone, ALSA và service systemd: [RASPBERRY_PI_DEPLOY_VI.md](RASPBERRY_PI_D
 2. `aplay` ships with Raspberry Pi OS — verify the speaker with `aplay -l`.
 3. Connect three momentary buttons from three distinct BCM GPIO pins to GND.
    All inputs use internal pull-ups and 100 ms debounce, so no external
-   resistors are required. GPIO numbers are mandatory; there are no defaults.
+   resistors are required. The defaults are Button 1 = GPIO 17, Button 2 =
+   GPIO 27, and Button 3 = GPIO 22; use the three `--button*-pin` flags to
+   override them with distinct BCM numbers.
 4. Provide capture and recording wrapper commands. They are parsed with
    `shlex` and executed directly, never through a shell. Each must contain the
    literal `{output}` placeholder. Capture must create a JPEG within 30 seconds;

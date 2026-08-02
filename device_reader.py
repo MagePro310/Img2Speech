@@ -20,11 +20,51 @@ from read_aloud import DEFAULT_PLAYER, DEFAULT_VOICE
 from reader_controller import ReaderController, ReaderError, ReaderState
 from spoken_notices import SpokenNoticeCache, beep_pcm
 
+DEFAULT_BUTTON1_PIN = 17
+DEFAULT_BUTTON2_PIN = 27
+DEFAULT_BUTTON3_PIN = 22
+BUTTON1_NEW_IMAGE_HOLD_SECONDS = 1.5
+
 
 def command_args(template, output_path):
     if "{output}" not in template:
         raise ReaderError("Command must contain the {output} placeholder.")
     return shlex.split(template.format(output=str(output_path)))
+
+
+def configure_button1_gestures(button, events,
+                               hold_seconds=BUTTON1_NEW_IMAGE_HOLD_SECONDS):
+    """Emit exactly one short-press or force-new-image event per press."""
+    gesture_lock = threading.Lock()
+    gesture = {"pressed": False, "resolved": True}
+
+    def pressed():
+        with gesture_lock:
+            gesture["pressed"] = True
+            gesture["resolved"] = False
+
+    def held():
+        with gesture_lock:
+            if not gesture["pressed"] or gesture["resolved"]:
+                return
+            gesture["resolved"] = True
+        events.put(("new_image",))
+
+    def released():
+        with gesture_lock:
+            if not gesture["pressed"]:
+                return
+            gesture["pressed"] = False
+            if gesture["resolved"]:
+                return
+            gesture["resolved"] = True
+        events.put(("button", 1))
+
+    button.hold_time = hold_seconds
+    button.hold_repeat = False
+    button.when_pressed = pressed
+    button.when_held = held
+    button.when_released = released
 
 
 def capture_image(template, output_path, timeout=30):
@@ -120,6 +160,7 @@ class DeviceReader:
         self.player = None
         self.player_lock = threading.Lock()
         self.record_timer = None
+        self.recording_token = 0
         if button_class is None:
             from gpiozero import Button
             button_class = Button
@@ -127,7 +168,10 @@ class DeviceReader:
         for number, pin in enumerate(
                 (args.button1_pin, args.button2_pin, args.button3_pin), 1):
             button = button_class(pin, pull_up=True, bounce_time=0.1)
-            button.when_pressed = lambda n=number: self.events.put(("button", n))
+            if number == 1:
+                configure_button1_gestures(button, self.events)
+            else:
+                button.when_pressed = lambda n=number: self.events.put(("button", n))
             self.buttons.append(button)
 
     def stop_player(self):
@@ -212,11 +256,18 @@ class DeviceReader:
                 self.events.put(("result", label, None, exc))
         threading.Thread(target=worker, daemon=True).start()
 
+    def stop_recording(self, *, discard):
+        self.recording_token += 1
+        if self.record_timer:
+            self.record_timer.cancel()
+            self.record_timer = None
+        return self.recorder.stop(discard=discard)
+
     def new_image(self):
         self.stop_player()
-        self.recorder.stop(discard=True)
+        self.stop_recording(discard=True)
         # Invalidate OCR before camera startup, which may take up to 30 seconds.
-        self.controller.close()
+        self.controller.discard_image()
         self.speak_notice("capture_start")
         image = Path(self.workdir.name) / f"capture-{time.time_ns()}.jpg"
         capture_image(self.args.capture_command, image)
@@ -225,7 +276,7 @@ class DeviceReader:
 
     def resume(self):
         self.stop_player()
-        self.recorder.stop(discard=True)
+        self.stop_recording(discard=True)
         self.start_audio(self.controller.button1())
 
     def handle_button1(self):
@@ -240,7 +291,7 @@ class DeviceReader:
 
     def handle_button2(self):
         self.stop_player()
-        self.recorder.stop(discard=True)
+        self.stop_recording(discard=True)
         self.controller.cancel_audio()
         self.speak_notice("summary_start")
         self.async_call("summary", self.controller.button2)
@@ -250,10 +301,7 @@ class DeviceReader:
             self.speak_notice("question_wait")
             return
         if self.controller.state == ReaderState.RECORDING:
-            if self.record_timer:
-                self.record_timer.cancel()
-                self.record_timer = None
-            audio_path = self.recorder.stop()
+            audio_path = self.stop_recording(discard=False)
             self.speak_notice("record_stop")
             self.async_call("answer", lambda: self.controller.button3_finish(audio_path))
             return
@@ -263,9 +311,11 @@ class DeviceReader:
         self.speak_notice("record_start")
         audio_path = Path(self.workdir.name) / f"question-{time.time_ns()}.wav"
         self.recorder.start(audio_path)
+        self.recording_token += 1
+        recording_token = self.recording_token
         self.record_timer = threading.Timer(
             self.args.max_record_seconds,
-            lambda: self.events.put(("button", 3)),
+            lambda: self.events.put(("record_timeout", recording_token)),
         )
         self.record_timer.daemon = True
         self.record_timer.start()
@@ -279,28 +329,37 @@ class DeviceReader:
             return
         self.start_audio(result)
 
+    def dispatch_event(self, event):
+        if event[0] == "button":
+            {1: self.handle_button1,
+             2: self.handle_button2,
+             3: self.handle_button3}[event[1]]()
+        elif event[0] == "new_image":
+            self.new_image()
+        elif event[0] == "record_timeout":
+            if (event[1] == self.recording_token
+                    and self.controller.state == ReaderState.RECORDING):
+                self.handle_button3()
+        elif event[0] == "result":
+            self.handle_result(event[1], event[2], event[3])
+        elif event[0] == "playback_error":
+            self.report_error("playback_error", event[1])
+        else:
+            raise ReaderError(f"Unknown device event: {event[0]}")
+
     def run(self):
         print("Three-button reader ready. Press Ctrl+C to stop.")
         try:
             while True:
                 event = self.events.get()
                 try:
-                    if event[0] == "button":
-                        {1: self.handle_button1,
-                         2: self.handle_button2,
-                         3: self.handle_button3}[event[1]]()
-                    elif event[0] == "result":
-                        self.handle_result(event[1], event[2], event[3])
-                    else:
-                        self.report_error("playback_error", event[1])
+                    self.dispatch_event(event)
                 except Exception as exc:
                     self.report_error(self.notice_for_exception(exc), exc)
         except KeyboardInterrupt:
             pass
         finally:
-            if self.record_timer:
-                self.record_timer.cancel()
-            self.recorder.stop(discard=True)
+            self.stop_recording(discard=True)
             self.stop_player()
             self.controller.close()
             for button in self.buttons:
@@ -308,11 +367,20 @@ class DeviceReader:
             self.workdir.cleanup()
 
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--button1-pin", type=int, required=True)
-    parser.add_argument("--button2-pin", type=int, required=True)
-    parser.add_argument("--button3-pin", type=int, required=True)
+    parser.add_argument(
+        "--button1-pin", type=int, default=DEFAULT_BUTTON1_PIN, metavar="BCM",
+        help=f"capture/resume button BCM pin (default: {DEFAULT_BUTTON1_PIN})",
+    )
+    parser.add_argument(
+        "--button2-pin", type=int, default=DEFAULT_BUTTON2_PIN, metavar="BCM",
+        help=f"summary button BCM pin (default: {DEFAULT_BUTTON2_PIN})",
+    )
+    parser.add_argument(
+        "--button3-pin", type=int, default=DEFAULT_BUTTON3_PIN, metavar="BCM",
+        help=f"question button BCM pin (default: {DEFAULT_BUTTON3_PIN})",
+    )
     parser.add_argument("--capture-command", required=True)
     parser.add_argument("--record-command", required=True)
     parser.add_argument("--player", default=DEFAULT_PLAYER)
@@ -326,6 +394,11 @@ def main():
     parser.add_argument("--stt-model", default="gpt-4o-mini-transcribe")
     parser.add_argument("--qa-model", default="gpt-4o-mini")
     parser.add_argument("--max-record-seconds", type=float, default=60)
+    return parser
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
 
     if len({args.button1_pin, args.button2_pin, args.button3_pin}) != 3:
