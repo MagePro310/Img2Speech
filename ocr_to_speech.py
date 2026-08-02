@@ -5,7 +5,7 @@ via OpenAI TTS into audio-only .mp4 files (one per image).
 Reads OPENAI_API_KEY from a .env file next to this script (or the environment).
 
 Usage:
-    uv run ocr_to_speech.py sample_input.jpg [more.jpg ...] [--voice onyx]
+    uv run ocr_to_speech.py sample_input.jpg [more.jpg ...] [--voice marin]
 """
 
 import argparse
@@ -28,6 +28,7 @@ OCR_PROMPT = (
     "Preserve Vietnamese diacritics and paragraph breaks. "
     "Output only the transcribed text, nothing else."
 )
+DEFAULT_VOICE = "marin"
 TTS_INSTRUCTIONS = (
     "Read the text aloud as natural, fluent Vietnamese narration "
     "at a comfortable storytelling pace."
@@ -120,7 +121,10 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("inputs", nargs="+", help=".jpg files or directories containing them")
-    ap.add_argument("--voice", default="onyx", help="TTS voice (default: onyx)")
+    ap.add_argument(
+        "--voice", default=DEFAULT_VOICE,
+        help=f"TTS voice (default: {DEFAULT_VOICE})",
+    )
     ap.add_argument("--ocr-model", default="gpt-4o", help="vision model for OCR")
     ap.add_argument("--tts-model", default="gpt-4o-mini-tts", help="TTS model")
     ap.add_argument("--outdir", type=Path, help="output directory (default: next to each input)")

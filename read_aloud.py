@@ -10,7 +10,7 @@ of the page is still being processed.
 Reads OPENAI_API_KEY from a .env file next to this script (or the environment).
 
 Usage:
-    uv run read_aloud.py photo.jpg [--voice onyx]
+    uv run read_aloud.py photo.jpg [--voice marin]
     uv run read_aloud.py photo.jpg --pcm-out out.pcm   # no audio device (testing)
 """
 
@@ -32,7 +32,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from ocr_to_speech import MAX_TTS_CHARS, OCR_PROMPT, TTS_INSTRUCTIONS
+from ocr_to_speech import DEFAULT_VOICE, MAX_TTS_CHARS, OCR_PROMPT, TTS_INSTRUCTIONS
 
 PCM_RATE = 24000            # gpt TTS "pcm" output: 24 kHz, 16-bit, mono
 PCM_BYTES_PER_SEC = PCM_RATE * 2
@@ -363,7 +363,10 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("image", type=Path, help="photo to read aloud")
-    ap.add_argument("--voice", default="onyx", help="TTS voice (default: onyx)")
+    ap.add_argument(
+        "--voice", default=DEFAULT_VOICE,
+        help=f"TTS voice (default: {DEFAULT_VOICE})",
+    )
     ap.add_argument("--ocr-model", default="gpt-4o-mini", help="vision model for OCR")
     ap.add_argument("--tts-model", default="gpt-4o-mini-tts", help="TTS model")
     ap.add_argument("--summary-model", default="gpt-4o-mini",

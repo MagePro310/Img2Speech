@@ -1,12 +1,16 @@
 """Shared resumable reader state machine for GPIO and browser adapters."""
 
 import re
+import math
 import threading
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
-from read_aloud import stream_ocr, stream_tts, summarize_text
+from read_aloud import (
+    DEFAULT_VOICE, PCM_BYTES_PER_SEC, stream_ocr, stream_tts, summarize_text,
+)
+from spoken_notices import SpokenNoticeCache
 
 
 class ReaderError(RuntimeError):
@@ -31,6 +35,14 @@ class AudioTask:
     kind: str
     cancel_event: threading.Event = field(default_factory=threading.Event)
     text: str | None = None
+    start_cursor: int = 0
+    pcm_bytes: int = 0
+    active_index: int | None = None
+    timeline: list[tuple[int, float]] = field(default_factory=list)
+    production_done: bool = False
+    progress_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    prefix_notice: str | None = None
+    suffix_notice: str | None = None
 
 
 @dataclass
@@ -108,7 +120,7 @@ class ReaderController:
     def __init__(self, client, *, ocr_model="gpt-4o-mini",
                  tts_model="gpt-4o-mini-tts", summary_model="gpt-4o-mini",
                  stt_model="gpt-4o-mini-transcribe", qa_model="gpt-4o-mini",
-                 voice="onyx"):
+                 voice=DEFAULT_VOICE, notice_cache=None):
         self.client = client
         self.ocr_model = ocr_model
         self.tts_model = tts_model
@@ -116,9 +128,11 @@ class ReaderController:
         self.stt_model = stt_model
         self.qa_model = qa_model
         self.voice = voice
+        self.notice_cache = notice_cache or SpokenNoticeCache(client)
         self.state = ReaderState.IDLE
         self.session = None
         self.current_task = None
+        self.last_reading_task = None
         self.generation = 0
         self.lock = threading.RLock()
 
@@ -164,12 +178,19 @@ class ReaderController:
         except Exception as exc:
             session.mark_ocr_done(exc)
 
-    def _new_audio_task(self, kind, state, text=None):
+    def _new_audio_task(self, kind, state, text=None, prefix_notice=None,
+                        suffix_notice=None):
         with self.lock:
             if self.current_task:
                 self.current_task.cancel_event.set()
-            task = AudioTask(self._next_generation(), kind, text=text)
+            start_cursor = self.session.cursor if kind == "reading" and self.session else 0
+            task = AudioTask(
+                self._next_generation(), kind, text=text, start_cursor=start_cursor,
+                prefix_notice=prefix_notice, suffix_notice=suffix_notice,
+            )
             self.current_task = task
+            if kind == "reading":
+                self.last_reading_task = task
             self.state = state
             return task
 
@@ -184,7 +205,10 @@ class ReaderController:
             self.session = DocumentSession(image_path)
             self.state = ReaderState.READING
             self._start_ocr(self.session)
-            return self._new_audio_task("reading", ReaderState.READING)
+            return self._new_audio_task(
+                "reading", ReaderState.READING,
+                prefix_notice="read_start", suffix_notice="read_done",
+            )
 
     def button1(self, image_path=None):
         with self.lock:
@@ -199,7 +223,10 @@ class ReaderController:
                     raise ReaderError("The image is finished; a new image is required.")
                 return self.load_image(image_path)
             self.cancel_audio()
-            return self._new_audio_task("reading", ReaderState.READING)
+            return self._new_audio_task(
+                "reading", ReaderState.READING,
+                prefix_notice="read_resume", suffix_notice="read_done",
+            )
 
     def button2(self):
         with self.lock:
@@ -228,7 +255,10 @@ class ReaderController:
         with self.lock:
             if operation != self.generation or self.state != ReaderState.SUMMARIZING:
                 return None
-            return self._new_audio_task("summary", ReaderState.SUMMARIZING, summary)
+            return self._new_audio_task(
+                "summary", ReaderState.SUMMARIZING, summary,
+                suffix_notice="summary_done",
+            )
 
     def button3_start(self):
         with self.lock:
@@ -282,7 +312,10 @@ class ReaderController:
                 return None
             self.session.latest_question = question
             self.session.latest_answer = answer
-            return self._new_audio_task("answer", ReaderState.ANSWERING, answer)
+            return self._new_audio_task(
+                "answer", ReaderState.ANSWERING, answer,
+                prefix_notice="answer_start", suffix_notice="answer_done",
+            )
 
     def status(self):
         with self.lock:
@@ -295,6 +328,48 @@ class ReaderController:
                 "answer": session.latest_answer if session else None,
             }
 
+    def sync_web_playback(self, generation, played_seconds):
+        """Reconcile the read cursor with audio actually played by a browser."""
+        if not isinstance(generation, int):
+            raise ReaderError("Audio generation must be an integer.")
+        if not isinstance(played_seconds, (int, float)) or not math.isfinite(played_seconds):
+            raise ReaderError("Playback time must be a finite number.")
+        if played_seconds < 0:
+            raise ReaderError("Playback time cannot be negative.")
+
+        with self.lock:
+            task = self.last_reading_task
+            session = self.session
+            if session is None or task is None or task.generation != generation:
+                return False
+            # Stop the producer before moving the cursor backwards. The button
+            # action immediately following this call will allocate a new generation.
+            task.cancel_event.set()
+            with task.progress_lock:
+                timeline = list(task.timeline)
+                active_index = task.active_index
+
+            cursor = task.start_cursor
+            interrupted_index = None
+            for index, end_seconds in timeline:
+                if end_seconds <= played_seconds:
+                    cursor = max(cursor, index + 1)
+                elif interrupted_index is None:
+                    interrupted_index = index
+            if interrupted_index is None and active_index is not None:
+                interrupted_index = active_index
+
+            with session.condition:
+                session.cursor = min(cursor, len(session.sentences))
+                session.started_index = (
+                    interrupted_index
+                    if interrupted_index is not None
+                    and interrupted_index >= session.cursor
+                    and interrupted_index < len(session.sentences)
+                    else None
+                )
+            return True
+
     def iter_audio(self, task):
         try:
             if task.kind == "reading":
@@ -302,11 +377,15 @@ class ReaderController:
             else:
                 completed = False
                 try:
+                    if task.prefix_notice:
+                        yield from self._iter_notice(task, task.prefix_notice)
                     for chunk in stream_tts(
                             self.client, self.tts_model, self.voice, task.text):
                         if task.cancel_event.is_set() or task.generation != self.generation:
                             return
                         yield chunk
+                    if task.suffix_notice:
+                        yield from self._iter_notice(task, task.suffix_notice)
                     completed = True
                 finally:
                     if completed:
@@ -318,9 +397,22 @@ class ReaderController:
                     self.state = ReaderState.ERROR
             raise
 
+    def _iter_notice(self, task, event, count_timeline=False):
+        pcm = self.notice_cache.safe_event_pcm(
+            self.tts_model, self.voice, event
+        )
+        if task.cancel_event.is_set() or task.generation != self.generation:
+            return
+        if count_timeline:
+            with task.progress_lock:
+                task.pcm_bytes += len(pcm)
+        if pcm:
+            yield pcm
+
     def _iter_reading(self, task):
         session = self.session
         completed_stream = False
+        prefix_pending = bool(task.prefix_notice)
         try:
             while not task.cancel_event.is_set() and task.generation == self.generation:
                 with session.condition:
@@ -336,22 +428,46 @@ class ReaderController:
                     index = session.cursor
                     text = session.sentences[index]
                     session.started_index = index
+                    with task.progress_lock:
+                        task.active_index = index
+
+                if prefix_pending:
+                    yield from self._iter_notice(
+                        task, task.prefix_notice, count_timeline=True
+                    )
+                    prefix_pending = False
+                    if task.cancel_event.is_set() or task.generation != self.generation:
+                        return
 
                 sentence_complete = False
                 for chunk in stream_tts(
                         self.client, self.tts_model, self.voice, text):
                     if task.cancel_event.is_set() or task.generation != self.generation:
                         return
+                    with task.progress_lock:
+                        task.pcm_bytes += len(chunk)
                     yield chunk
                 else:
                     sentence_complete = True
 
-                if sentence_complete:
+                if (sentence_complete and not task.cancel_event.is_set()
+                        and task.generation == self.generation):
+                    with task.progress_lock:
+                        task.timeline.append(
+                            (index, task.pcm_bytes / PCM_BYTES_PER_SEC)
+                        )
+                        task.active_index = None
                     with session.condition:
                         if session.cursor == index:
                             session.cursor += 1
                         session.started_index = None
+            if (completed_stream and task.suffix_notice
+                    and not task.cancel_event.is_set()
+                    and task.generation == self.generation):
+                yield from self._iter_notice(task, task.suffix_notice)
         finally:
+            with task.progress_lock:
+                task.production_done = completed_stream
             if completed_stream:
                 with self.lock:
                     if task.generation == self.generation:

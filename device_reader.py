@@ -2,12 +2,10 @@
 """Persistent three-button Raspberry Pi image reader."""
 
 import argparse
-import math
 import os
 import queue
 import shlex
 import signal
-import struct
 import subprocess
 import sys
 import tempfile
@@ -18,8 +16,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from read_aloud import DEFAULT_PLAYER, PCM_RATE
+from read_aloud import DEFAULT_PLAYER, DEFAULT_VOICE
 from reader_controller import ReaderController, ReaderError, ReaderState
+from spoken_notices import SpokenNoticeCache, beep_pcm
 
 
 def command_args(template, output_path):
@@ -30,7 +29,10 @@ def command_args(template, output_path):
 
 def capture_image(template, output_path, timeout=30):
     output_path = Path(output_path)
-    subprocess.run(command_args(template, output_path), check=True, timeout=timeout)
+    try:
+        subprocess.run(command_args(template, output_path), check=True, timeout=timeout)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        raise ReaderError(f"Capture command failed: {exc}") from exc
     if not output_path.is_file() or output_path.stat().st_size == 0:
         raise ReaderError("Capture command did not create a non-empty JPEG.")
     if output_path.suffix.lower() not in {".jpg", ".jpeg"}:
@@ -52,7 +54,13 @@ class Recorder:
         self.output_path = Path(output_path)
         if self.output_path.exists():
             self.output_path.unlink()
-        self.process = subprocess.Popen(command_args(self.template, self.output_path))
+        try:
+            self.process = subprocess.Popen(
+                command_args(self.template, self.output_path)
+            )
+        except Exception as exc:
+            self.output_path = None
+            raise ReaderError(f"Record command failed to start: {exc}") from exc
 
     def stop(self, timeout=5, discard=False):
         process, output_path = self.process, self.output_path
@@ -82,19 +90,6 @@ class Recorder:
         return output_path
 
 
-def beep_pcm(count=1, frequency=880, duration=0.09):
-    samples = []
-    tone_samples = int(PCM_RATE * duration)
-    gap = b"\0\0" * int(PCM_RATE * 0.06)
-    for index in range(count):
-        for n in range(tone_samples):
-            value = int(7000 * math.sin(2 * math.pi * frequency * n / PCM_RATE))
-            samples.append(struct.pack("<h", value))
-        if index + 1 < count:
-            samples.append(gap)
-    return b"".join(samples)
-
-
 def play_pcm(player_command, chunks):
     player = subprocess.Popen(shlex.split(player_command), stdin=subprocess.PIPE)
     try:
@@ -112,10 +107,12 @@ def play_pcm(player_command, chunks):
 class DeviceReader:
     def __init__(self, args, client, button_class=None):
         self.args = args
+        self.notice_cache = SpokenNoticeCache(client)
         self.controller = ReaderController(
             client, ocr_model=args.ocr_model, tts_model=args.tts_model,
             summary_model=args.summary_model, stt_model=args.stt_model,
             qa_model=args.qa_model, voice=args.voice,
+            notice_cache=self.notice_cache,
         )
         self.events = queue.Queue()
         self.recorder = Recorder(args.record_command)
@@ -176,6 +173,36 @@ class DeviceReader:
         self.stop_player()
         play_pcm(self.args.player, [beep_pcm(count, frequency)])
 
+    def speak_notice(self, event):
+        self.stop_player()
+        pcm = self.notice_cache.safe_event_pcm(
+            self.args.tts_model, self.args.voice, event
+        )
+        play_pcm(self.args.player, [pcm])
+
+    def report_error(self, event, error):
+        print(f"{event}: {error}", file=sys.stderr)
+        try:
+            self.speak_notice(event)
+        except Exception:
+            try:
+                self.feedback(3, 330)
+            except Exception:
+                pass
+
+    @staticmethod
+    def notice_for_exception(error):
+        message = str(error).lower()
+        if "no active image" in message:
+            return "no_image"
+        if "no spoken text" in message:
+            return "no_content"
+        if "capture" in message or "jpeg" in message:
+            return "camera_error"
+        if "record" in message or "wav" in message:
+            return "microphone_error"
+        return "generic_error"
+
     def async_call(self, label, function):
         def worker():
             try:
@@ -190,8 +217,10 @@ class DeviceReader:
         self.recorder.stop(discard=True)
         # Invalidate OCR before camera startup, which may take up to 30 seconds.
         self.controller.close()
+        self.speak_notice("capture_start")
         image = Path(self.workdir.name) / f"capture-{time.time_ns()}.jpg"
         capture_image(self.args.capture_command, image)
+        self.speak_notice("image_processing")
         self.start_audio(self.controller.load_image(image))
 
     def resume(self):
@@ -212,23 +241,26 @@ class DeviceReader:
     def handle_button2(self):
         self.stop_player()
         self.recorder.stop(discard=True)
+        self.controller.cancel_audio()
+        self.speak_notice("summary_start")
         self.async_call("summary", self.controller.button2)
 
     def handle_button3(self):
         if self.controller.state == ReaderState.PROCESSING_QUESTION:
+            self.speak_notice("question_wait")
             return
         if self.controller.state == ReaderState.RECORDING:
             if self.record_timer:
                 self.record_timer.cancel()
                 self.record_timer = None
             audio_path = self.recorder.stop()
-            self.feedback(2)
+            self.speak_notice("record_stop")
             self.async_call("answer", lambda: self.controller.button3_finish(audio_path))
             return
         self.stop_player()
         if not self.controller.button3_start():
             return
-        self.feedback(1)
+        self.speak_notice("record_start")
         audio_path = Path(self.workdir.name) / f"question-{time.time_ns()}.wav"
         self.recorder.start(audio_path)
         self.record_timer = threading.Timer(
@@ -240,8 +272,10 @@ class DeviceReader:
 
     def handle_result(self, label, result, error):
         if error:
-            print(f"{label} failed: {error}", file=sys.stderr)
-            self.feedback(3, 330)
+            notice = self.notice_for_exception(error)
+            if notice == "generic_error":
+                notice = "model_error"
+            self.report_error(notice, error)
             return
         self.start_audio(result)
 
@@ -258,11 +292,9 @@ class DeviceReader:
                     elif event[0] == "result":
                         self.handle_result(event[1], event[2], event[3])
                     else:
-                        print(f"playback failed: {event[1]}", file=sys.stderr)
-                        self.feedback(3, 330)
+                        self.report_error("playback_error", event[1])
                 except Exception as exc:
-                    print(f"button action failed: {exc}", file=sys.stderr)
-                    self.feedback(3, 330)
+                    self.report_error(self.notice_for_exception(exc), exc)
         except KeyboardInterrupt:
             pass
         finally:
@@ -284,7 +316,10 @@ def main():
     parser.add_argument("--capture-command", required=True)
     parser.add_argument("--record-command", required=True)
     parser.add_argument("--player", default=DEFAULT_PLAYER)
-    parser.add_argument("--voice", default="onyx")
+    parser.add_argument(
+        "--voice", default=DEFAULT_VOICE,
+        help=f"TTS voice for all spoken output (default: {DEFAULT_VOICE})",
+    )
     parser.add_argument("--ocr-model", default="gpt-4o-mini")
     parser.add_argument("--tts-model", default="gpt-4o-mini-tts")
     parser.add_argument("--summary-model", default="gpt-4o-mini")

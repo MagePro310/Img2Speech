@@ -19,6 +19,10 @@ interrupted, its cursor stays at that sentence, so Button 1 resumes from the
 start of the interrupted sentence. OCR continues in the background while a
 summary or question is being handled.
 
+The Raspberry Pi controller and browser simulator also speak short Vietnamese
+status notices before and after reading, summaries, recording, and answers.
+Notices use the selected TTS model/voice and are cached in memory after first use.
+
 ## Setup
 
 Requires [uv](https://docs.astral.sh/uv/) (it fetches its own Python; system
@@ -67,9 +71,13 @@ uv run device_reader.py \
 uv run serve_reader.py
 ```
 
-Common model flags where applicable: `--voice` (default `onyx`, deep male),
+Common model flags where applicable: `--voice` (default `marin` for all spoken
+output),
 `--ocr-model` (default `gpt-4o` for batch, `gpt-4o-mini` for live),
 `--tts-model` (default `gpt-4o-mini-tts`).
+
+The `marin` voice is supported by the default `gpt-4o-mini-tts` model. If you
+select `tts-1` or `tts-1-hd`, also select a voice supported by that model.
 
 The interactive readers accept `--summary-model` (default `gpt-4o-mini`).
 `device_reader.py` and `serve_reader.py` also accept `--stt-model` (default
@@ -94,6 +102,9 @@ The browser simulator exposes `POST /button/1`, `/button/2`, `/button/3`,
 `GET /audio`, and `GET /status`, all keyed by the `sid` query parameter.
 Button 1 accepts JPEG or PNG data for a new image or an empty body to resume. Button 3
 uses an empty body to begin recording and WAV, WebM, or Ogg data to finish it.
+When Button 2 or Button 3 interrupts browser narration, the client also sends
+the optional `generation` and `played_seconds` query parameters so the server
+resumes from the first sentence that was not completely heard.
 
 ## How the live streaming works
 
@@ -160,6 +171,9 @@ new image is the only action that cancels and replaces the OCR session.
   change pace or language.
 
 ## Deploying on the Raspberry Pi
+
+Hướng dẫn triển khai đầy đủ bằng tiếng Việt, gồm sơ đồ nối ba nút, camera,
+microphone, ALSA và service systemd: [RASPBERRY_PI_DEPLOY_VI.md](RASPBERRY_PI_DEPLOY_VI.md).
 
 1. Copy this folder (including `.env`) to the Pi and install uv; `uv sync`
    fetches an ARM Python automatically.
