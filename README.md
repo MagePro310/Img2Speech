@@ -176,8 +176,12 @@ new image is the only action that cancels and replaces the OCR session.
 
 ## Deploying on the Raspberry Pi
 
-Hướng dẫn triển khai đầy đủ bằng tiếng Việt, gồm sơ đồ nối ba nút, camera,
-microphone, ALSA và service systemd: [RASPBERRY_PI_DEPLOY_VI.md](RASPBERRY_PI_DEPLOY_VI.md).
+Tài liệu tiếng Việt:
+
+- [Hướng dẫn vận hành hằng ngày](RASPBERRY_PI_VAN_HANH_VI.md) — khởi động,
+  thao tác ba nút, đổi trang, tín hiệu âm thanh và xử lý lỗi nhanh.
+- [Hướng dẫn triển khai đầy đủ](RASPBERRY_PI_DEPLOY_VI.md) — sơ đồ nối nút,
+  camera, microphone, ALSA và service systemd.
 
 1. Copy this folder (including `.env`) to the Pi and install uv; `uv sync`
    fetches an ARM Python automatically.

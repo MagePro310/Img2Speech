@@ -4,6 +4,9 @@ Tài liệu này hướng dẫn chạy `device_reader.py` với ba nút vật l�
 Camera, microphone và loa. Ví dụ sử dụng Raspberry Pi OS Bookworm, camera
 `rpicam-still`, ALSA `arecord`/`aplay` và cách đánh số GPIO theo BCM.
 
+Nếu thiết bị đã cài đặt xong và chỉ cần hướng dẫn sử dụng hằng ngày, xem
+[RASPBERRY_PI_VAN_HANH_VI.md](RASPBERRY_PI_VAN_HANH_VI.md).
+
 ## 1. Phần cứng và sơ đồ nối nút
 
 Phần cứng tối thiểu:
