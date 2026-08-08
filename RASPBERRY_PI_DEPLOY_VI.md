@@ -96,6 +96,14 @@ Bảo vệ file khóa API:
 chmod 600 .env
 ```
 
+Project OpenAI gắn với API key phải có quyền dùng
+[`gpt-5.6-sol`](https://developers.openai.com/api/docs/models/gpt-5.6-sol).
+Đây là model OCR mặc định theo hướng ưu tiên chất lượng; ảnh được gửi ở mức
+chi tiết cao và OCR dùng reasoning `max`, vì vậy thời gian chờ trước khi bắt
+đầu đọc và chi phí API có thể cao hơn. Hãy kiểm tra quyền truy cập và bảng giá
+hiện hành trong tài khoản OpenAI trước khi triển khai; tài liệu này không cố
+định một mức giá có thể hết hiệu lực.
+
 Kiểm tra Python nhìn thấy GPIO Zero:
 
 ```bash
@@ -127,6 +135,20 @@ uv run device_reader.py \
 Không cần truyền tham số GPIO cho sơ đồ mặc định: Button 1 dùng BCM 17,
 Button 2 dùng BCM 27 và Button 3 dùng BCM 22. Muốn đổi chân, truyền
 `--button1-pin`, `--button2-pin` và `--button3-pin`; ba giá trị phải khác nhau.
+
+Các model và giọng mặc định trên Raspberry Pi:
+
+- OCR ảnh: `gpt-5.6-sol`, ảnh ở mức `detail: "high"` và
+  `reasoning_effort: "max"`.
+- Đọc nội dung và mọi thông báo: `gpt-4o-mini-tts`, giọng `marin`.
+- Tóm tắt và hỏi đáp: `gpt-4o-mini`; nhận dạng câu hỏi:
+  `gpt-4o-mini-transcribe`.
+
+Hệ thống không tự chuyển sang model OCR mini khi `gpt-5.6-sol` lỗi hoặc API key
+không có quyền. Muốn chủ động dùng model OCR khác, thêm
+`--ocr-model <model-id>` vào lệnh chạy hoặc dòng `ExecStart` của service; ảnh
+vẫn được gửi ở mức chi tiết cao, còn reasoning `max` chỉ áp dụng cho
+`gpt-5.6-sol`.
 
 Giữ nguyên chuỗi `{output}` trong cả hai command. Chương trình thay chuỗi này
 bằng file tạm, tách tham số bằng `shlex` và không chạy qua shell.
@@ -308,8 +330,13 @@ microphone, loa và log:
 journalctl -u img2speech.service -n 100 --no-pager
 ```
 
+Nếu log báo không có quyền hoặc không tìm thấy `gpt-5.6-sol`, chương trình sẽ
+không tự fallback. Cấp quyền model cho project OpenAI hoặc cấu hình thủ công
+`--ocr-model <model-id>`, sau đó khởi động lại chương trình/service.
+
 ## Tài liệu tham khảo
 
 - [Raspberry Pi camera software](https://www.raspberrypi.com/documentation/computers/camera_software.html)
 - [Raspberry Pi audio documentation](https://www.raspberrypi.com/documentation/accessories/audio.html)
 - [GPIO Zero pin factories](https://gpiozero.readthedocs.io/en/stable/api_pins.html)
+- [OpenAI GPT-5.6 Sol model](https://developers.openai.com/api/docs/models/gpt-5.6-sol)

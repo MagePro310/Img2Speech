@@ -32,7 +32,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from ocr_to_speech import DEFAULT_VOICE, MAX_TTS_CHARS, OCR_PROMPT, TTS_INSTRUCTIONS
+from ocr_to_speech import (
+    DEFAULT_OCR_IMAGE_DETAIL, DEFAULT_OCR_MODEL, DEFAULT_TTS_MODEL,
+    DEFAULT_VOICE, MAX_TTS_CHARS, OCR_PROMPT, TTS_INSTRUCTIONS,
+    ocr_reasoning_kwargs,
+)
 
 PCM_RATE = 24000            # gpt TTS "pcm" output: 24 kHz, 16-bit, mono
 PCM_BYTES_PER_SEC = PCM_RATE * 2
@@ -105,9 +109,13 @@ def stream_ocr(client, model, image_path):
             "role": "user",
             "content": [
                 {"type": "text", "text": OCR_PROMPT},
-                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+                {"type": "image_url", "image_url": {
+                    "url": f"data:{mime};base64,{b64}",
+                    "detail": DEFAULT_OCR_IMAGE_DETAIL,
+                }},
             ],
         }],
+        **ocr_reasoning_kwargs(model),
     )
     for event in stream:
         delta = event.choices[0].delta.content if event.choices else None
@@ -367,8 +375,8 @@ def main():
         "--voice", default=DEFAULT_VOICE,
         help=f"TTS voice (default: {DEFAULT_VOICE})",
     )
-    ap.add_argument("--ocr-model", default="gpt-4o-mini", help="vision model for OCR")
-    ap.add_argument("--tts-model", default="gpt-4o-mini-tts", help="TTS model")
+    ap.add_argument("--ocr-model", default=DEFAULT_OCR_MODEL, help="vision model for OCR")
+    ap.add_argument("--tts-model", default=DEFAULT_TTS_MODEL, help="TTS model")
     ap.add_argument("--summary-model", default="gpt-4o-mini",
                     help="model used to summarize the OCR text")
     ap.add_argument("--summary-button-pin", type=int, nargs="?", const=17, metavar="GPIO",

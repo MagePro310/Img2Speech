@@ -16,6 +16,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from ocr_to_speech import DEFAULT_OCR_MODEL, DEFAULT_TTS_MODEL
 from read_aloud import DEFAULT_PLAYER, DEFAULT_VOICE
 from reader_controller import ReaderController, ReaderError, ReaderState
 from spoken_notices import SpokenNoticeCache, beep_pcm
@@ -388,8 +389,8 @@ def build_parser():
         "--voice", default=DEFAULT_VOICE,
         help=f"TTS voice for all spoken output (default: {DEFAULT_VOICE})",
     )
-    parser.add_argument("--ocr-model", default="gpt-4o-mini")
-    parser.add_argument("--tts-model", default="gpt-4o-mini-tts")
+    parser.add_argument("--ocr-model", default=DEFAULT_OCR_MODEL)
+    parser.add_argument("--tts-model", default=DEFAULT_TTS_MODEL)
     parser.add_argument("--summary-model", default="gpt-4o-mini")
     parser.add_argument("--stt-model", default="gpt-4o-mini-transcribe")
     parser.add_argument("--qa-model", default="gpt-4o-mini")

@@ -3,14 +3,14 @@
 Photograph a page of text (e.g. a Vietnamese web-novel chapter) and have it
 read aloud with an OpenAI vision model for OCR and OpenAI TTS for the voice.
 Built as the software for a Raspberry Pi reading device: snap a photo, hear
-the text a few seconds later.
+the recognized text read aloud.
 
 ## The four tools
 
 | Script | Purpose | Output |
 |---|---|---|
 | `ocr_to_speech.py` | **Batch converter** — archive chapters as audio files | one `.mp4` (audio-only, AAC) + `.txt` transcript per image |
-| `read_aloud.py` | **Live reader** — the device engine; speech starts ~3s after the photo | audio played directly through `aplay` (or any PCM player) |
+| `read_aloud.py` | **Live reader** — the device engine; speech streams as OCR sentences arrive | audio played directly through `aplay` (or any PCM player) |
 | `device_reader.py` | **Three-button Pi controller** — capture, resumable reading, summary, and questions | continuous GPIO-driven audio |
 | `serve_reader.py` | **Browser simulator** — test the same three-button workflow with a camera/file picker and microphone | streaming WAV plus the latest question/answer |
 
@@ -72,8 +72,16 @@ uv run serve_reader.py
 
 Common model flags where applicable: `--voice` (default `marin` for all spoken
 output),
-`--ocr-model` (default `gpt-4o` for batch, `gpt-4o-mini` for live),
+`--ocr-model` (default `gpt-5.6-sol` for batch, live, Raspberry Pi, and web),
 `--tts-model` (default `gpt-4o-mini-tts`).
+
+The default OCR path is quality-first: it sends the image with `detail: "high"`
+and uses `reasoning_effort: "max"` with `gpt-5.6-sol`. A manually selected
+`--ocr-model` still receives the high-detail image, but the Sol-specific
+reasoning setting is omitted for compatibility. There is no automatic OCR
+fallback; an unavailable or failed model is reported through the existing error
+path. Use `--ocr-model <model-id>` explicitly if the project must use another
+vision-capable model.
 
 The `marin` voice is supported by the default `gpt-4o-mini-tts` model. If you
 select `tts-1` or `tts-1-hd`, also select a voice supported by that model.
@@ -140,11 +148,11 @@ pipeline before hearing anything. Every stage streams, and the stages overlap:
    consecutive segments concatenate gaplessly, and the player's blocking
    stdin naturally paces the whole pipeline at real-time speed.
 
-Measured on the included `sample_input.jpg` (921 chars of Vietnamese prose):
-first audio at **~3.3–4.6 s** (vs ~15 s for the sequential batch pipeline),
-then 65 s of continuous narration with no audible gaps. Every run prints
+Time to first audio depends on the image, network, model access, and reasoning
+work. The `gpt-5.6-sol` high-detail, maximum-reasoning default favors OCR
+quality and may start more slowly than earlier live defaults. Every run prints
 timestamped milestones (first OCR token, first audio byte, per-segment
-completion) so regressions are easy to spot.
+completion) so latency regressions are easy to spot.
 
 The batch script instead maximizes archive quality: full OCR, then TTS in
 ≤3500-char chunks returned as AAC, concatenated and remuxed without
@@ -162,14 +170,19 @@ Only a fully completed sentence advances the cursor; if the first sentence is
 interrupted, it is still available as the summary/question fallback. Loading a
 new image is the only action that cancels and replaces the OCR session.
 
-## Model choice & cost
+## Model choice, quality, latency & cost
 
-- OCR: `gpt-4o` transcribed the sample perfectly; `gpt-4o-mini` (live
-  default) is ~15× cheaper and faster but made ~9 Vietnamese diacritic
-  errors on the same page (≈98.7 % match) — audible as occasional
-  mispronounced words. If that bothers you: `--ocr-model gpt-4o`.
-- TTS `gpt-4o-mini-tts` costs ≈ $0.015 per minute of audio; a typical page
-  is **~$0.02 per reading** all-in.
+- OCR defaults to [`gpt-5.6-sol`](https://developers.openai.com/api/docs/models/gpt-5.6-sol)
+  in every workflow. High image detail plus maximum reasoning prioritizes
+  transcription quality, but can increase time to first audio and API spend.
+  Confirm that the OpenAI project has access to this model before deployment
+  and consult current account pricing rather than relying on a fixed estimate.
+  The application does not silently fall back when OCR fails; choose another
+  vision-capable model explicitly with `--ocr-model <model-id>` if needed.
+- Spoken page text, summaries, answers, and notices continue to use
+  `gpt-4o-mini-tts` with the `marin` voice by default. Summary and Q&A use
+  `gpt-4o-mini`, while question transcription uses
+  `gpt-4o-mini-transcribe`.
 - The TTS narration style is steered by `TTS_INSTRUCTIONS` in
   `ocr_to_speech.py` ("natural, fluent Vietnamese narration") — edit it to
   change pace or language.

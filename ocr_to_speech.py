@@ -28,12 +28,23 @@ OCR_PROMPT = (
     "Preserve Vietnamese diacritics and paragraph breaks. "
     "Output only the transcribed text, nothing else."
 )
+DEFAULT_OCR_MODEL = "gpt-5.6-sol"
+DEFAULT_OCR_IMAGE_DETAIL = "high"
+DEFAULT_OCR_REASONING_EFFORT = "low"
+DEFAULT_TTS_MODEL = "gpt-4o-mini-tts"
 DEFAULT_VOICE = "marin"
 TTS_INSTRUCTIONS = (
     "Read the text aloud as natural, fluent Vietnamese narration "
     "at a comfortable storytelling pace."
 )
 MAX_TTS_CHARS = 3500  # API limit is 4096 per request; leave headroom
+
+
+def ocr_reasoning_kwargs(model):
+    """Return reasoning options supported by the quality-first OCR default."""
+    if model == DEFAULT_OCR_MODEL:
+        return {"reasoning_effort": DEFAULT_OCR_REASONING_EFFORT}
+    return {}
 
 
 def ocr_image(client, model, image_path):
@@ -45,9 +56,13 @@ def ocr_image(client, model, image_path):
             "role": "user",
             "content": [
                 {"type": "text", "text": OCR_PROMPT},
-                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+                {"type": "image_url", "image_url": {
+                    "url": f"data:{mime};base64,{b64}",
+                    "detail": DEFAULT_OCR_IMAGE_DETAIL,
+                }},
             ],
         }],
+        **ocr_reasoning_kwargs(model),
     )
     return resp.choices[0].message.content.strip()
 
@@ -125,8 +140,8 @@ def main():
         "--voice", default=DEFAULT_VOICE,
         help=f"TTS voice (default: {DEFAULT_VOICE})",
     )
-    ap.add_argument("--ocr-model", default="gpt-4o", help="vision model for OCR")
-    ap.add_argument("--tts-model", default="gpt-4o-mini-tts", help="TTS model")
+    ap.add_argument("--ocr-model", default=DEFAULT_OCR_MODEL, help="vision model for OCR")
+    ap.add_argument("--tts-model", default=DEFAULT_TTS_MODEL, help="TTS model")
     ap.add_argument("--outdir", type=Path, help="output directory (default: next to each input)")
     args = ap.parse_args()
 

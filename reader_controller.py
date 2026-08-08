@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
+from ocr_to_speech import DEFAULT_OCR_MODEL, DEFAULT_TTS_MODEL
 from read_aloud import (
     DEFAULT_VOICE, PCM_BYTES_PER_SEC, stream_ocr, stream_tts, summarize_text,
 )
@@ -117,8 +118,8 @@ def answer_question(client, model, source_text, question):
 
 
 class ReaderController:
-    def __init__(self, client, *, ocr_model="gpt-4o-mini",
-                 tts_model="gpt-4o-mini-tts", summary_model="gpt-4o-mini",
+    def __init__(self, client, *, ocr_model=DEFAULT_OCR_MODEL,
+                 tts_model=DEFAULT_TTS_MODEL, summary_model="gpt-4o-mini",
                  stt_model="gpt-4o-mini-transcribe", qa_model="gpt-4o-mini",
                  voice=DEFAULT_VOICE, notice_cache=None):
         self.client = client
