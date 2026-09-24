@@ -127,6 +127,28 @@ class ReaderControllerTests(unittest.TestCase):
         self.assertNotIn("Câu hỏi một", second_messages[1]["content"])
         self.assertNotIn("Trả lời một", str(second_messages))
 
+    def test_answer_prompt_searches_all_heard_text_by_meaningful_keyword(self):
+        self.client.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="Câu trả lời"))]
+        )
+
+        reader_controller.answer_question(
+            self.client,
+            "qa",
+            "Lan sống ở Huế.\n\nNhiều câu không liên quan.\n\nLan thích nhã nhạc.",
+            "Lan thích loại nhạc nào?",
+        )
+
+        messages = self.client.chat.completions.create.call_args.kwargs["messages"]
+        prompt = messages[0]["content"]
+        self.assertIn("toàn bộ NỘI DUNG ĐÃ ĐỌC", prompt)
+        self.assertIn("từ khóa", prompt)
+        self.assertIn("bất kỳ vị trí nào", prompt)
+        self.assertIn("Không coi các từ chung chung", prompt)
+        self.assertIn("không dùng kiến thức ngoài", prompt)
+        self.assertIn("Lan sống ở Huế", messages[1]["content"])
+        self.assertIn("Lan thích nhã nhạc", messages[1]["content"])
+
     def test_new_image_resets_latest_question_and_answer(self):
         self.load_sentences()
         self.controller.session.latest_question = "Cũ"

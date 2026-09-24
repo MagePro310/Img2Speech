@@ -90,7 +90,10 @@ The interactive readers accept `--summary-model` (default `gpt-4o-mini`).
 `device_reader.py` and `serve_reader.py` also accept `--stt-model` (default
 `gpt-4o-mini-transcribe`) and `--qa-model` (default `gpt-4o-mini`). Each
 question sends only the original text heard so far and the current recognized
-question. Previous questions and answers are never sent to the model.
+question. The answer searches the whole heard portion for meaningful keywords,
+including equivalent wording, and combines relevant details wherever they
+appear. Previous questions and answers are never sent to the model, and outside
+knowledge is not used.
 
 On the browser page:
 
@@ -100,7 +103,7 @@ On the browser page:
   sentences heard completely so far. The first interrupted sentence is used
   as a fallback when no sentence has finished.
 - Button 3 starts microphone recording; press it again to stop, transcribe, and
-  answer using only the text heard from the current image.
+  answer from any relevant passage in the text heard from the current image.
 
 On the Raspberry Pi, press Button 1 briefly to keep its normal capture/resume
 behavior. Hold Button 1 for 1.5 seconds to discard the current page in any state,
@@ -191,13 +194,16 @@ new image is the only action that cancels and replaces the OCR session.
 
 Tài liệu tiếng Việt:
 
+- [Cài đặt Raspberry Pi mới từ đầu](RASPBERRY_PI_SETUP_TU_DAU_VI.md) — từ ghi
+  Raspberry Pi OS, đấu phần cứng và cài workspace đến systemd và nghiệm thu.
 - [Hướng dẫn vận hành hằng ngày](RASPBERRY_PI_VAN_HANH_VI.md) — khởi động,
   thao tác ba nút, đổi trang, tín hiệu âm thanh và xử lý lỗi nhanh.
 - [Hướng dẫn triển khai đầy đủ](RASPBERRY_PI_DEPLOY_VI.md) — sơ đồ nối nút,
   camera, microphone, ALSA và service systemd.
 
-1. Copy this folder (including `.env`) to the Pi and install uv; `uv sync`
-   fetches an ARM Python automatically.
+1. Clone or copy this folder to the Pi without `.env`, install uv, and run
+   `uv sync`. Create a new mode-600 `.env` from `.env.example` directly on the
+   Pi so the API key is never copied through source control or shared media.
 2. `aplay` ships with Raspberry Pi OS — verify the speaker with `aplay -l`.
 3. Connect three momentary buttons from three distinct BCM GPIO pins to GND.
    All inputs use internal pull-ups and 100 ms debounce, so no external

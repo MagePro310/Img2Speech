@@ -2,7 +2,8 @@
 
 Tài liệu này dành cho thiết bị đã được chép code, cài dependency, nối camera,
 microphone, loa và ba nút. Nếu chưa hoàn tất phần cài đặt hoặc systemd, xem
-[RASPBERRY_PI_DEPLOY_VI.md](RASPBERRY_PI_DEPLOY_VI.md).
+[hướng dẫn cài đặt từ đầu](RASPBERRY_PI_SETUP_TU_DAU_VI.md) hoặc
+[tài liệu triển khai kỹ thuật](RASPBERRY_PI_DEPLOY_VI.md).
 
 ## 1. Bảng thao tác nhanh
 
@@ -107,8 +108,10 @@ tóm tắt không được đưa ngược vào trang sách.
 4. Chờ thông báo “Bắt đầu trả lời”, nghe câu trả lời, rồi chờ “Đã trả lời xong.”
 5. Nhấn ngắn Nút 1 để đọc tiếp trang đang dở, hoặc nhấn Nút 3 để hỏi câu mới.
 
-Nếu không nhấn lần hai, câu hỏi tự dừng sau 60 giây. Mỗi câu hỏi chỉ dùng phần
-văn bản gốc đã nghe của trang hiện tại và không mang theo lịch sử hỏi đáp cũ.
+Nếu không nhấn lần hai, câu hỏi tự dừng sau 60 giây. Mỗi câu hỏi tìm từ
+khóa/chủ đề trong toàn bộ phần văn bản gốc đã nghe của trang hiện tại,
+có thể tổng hợp chi tiết ở nhiều đoạn nhưng không dùng kiến thức ngoài và
+không mang theo lịch sử hỏi đáp cũ.
 Nếu nhấn Nút 3 trong lúc hệ thống vẫn xử lý câu hỏi, thiết bị báo “Đang xử lý
 câu hỏi. Vui lòng chờ.”
 

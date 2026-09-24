@@ -88,10 +88,15 @@ class DocumentSession:
 
 
 QA_PROMPT = (
-    "Bạn là trợ lý đọc sách tiếng Việt. Chỉ trả lời câu hỏi bằng thông tin có trong "
-    "NỘI DUNG ĐÃ ĐỌC được cung cấp. Không dùng kiến thức ngoài, không suy đoán. "
-    "Nếu nội dung không đủ để trả lời, hãy nói rõ rằng phần đã đọc chưa có thông tin đó. "
-    "Trả lời ngắn gọn, tự nhiên và phù hợp để đọc thành tiếng."
+    "Bạn là trợ lý đọc sách tiếng Việt. Hãy tìm trong toàn bộ NỘI DUNG "
+    "ĐÃ ĐỌC, không chỉ ở câu gần nhất. Xác định các từ khóa, tên riêng, "
+    "sự vật hoặc chủ đề có nghĩa trong câu hỏi; chấp nhận biến thể từ ngữ và cách "
+    "diễn đạt tương đương. Nếu có từ khóa hoặc chủ đề liên quan trong nội dung, "
+    "hãy tổng hợp tất cả chi tiết liên quan ở bất kỳ vị trí nào để trả lời. "
+    "Không coi các từ chung chung như 'ai', 'gì', 'là', 'và', 'của' là từ khóa. "
+    "Nếu không có từ khóa/chủ đề liên quan hoặc nội dung "
+    "thực sự không có dữ kiện cần thiết, hãy nói rõ phần đã đọc chưa có "
+    "thông tin đó. Trả lời ngắn gọn, tự nhiên và phù hợp để đọc thành tiếng."
 )
 
 

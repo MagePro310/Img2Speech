@@ -4,6 +4,9 @@ Tài liệu này hướng dẫn chạy `device_reader.py` với ba nút vật l�
 Camera, microphone và loa. Ví dụ sử dụng Raspberry Pi OS Bookworm, camera
 `rpicam-still`, ALSA `arecord`/`aplay` và cách đánh số GPIO theo BCM.
 
+Nếu bắt đầu với một Raspberry Pi mới hoàn toàn, xem quy trình từng bước tại
+[RASPBERRY_PI_SETUP_TU_DAU_VI.md](RASPBERRY_PI_SETUP_TU_DAU_VI.md).
+
 Nếu thiết bị đã cài đặt xong và chỉ cần hướng dẫn sử dụng hằng ngày, xem
 [RASPBERRY_PI_VAN_HANH_VI.md](RASPBERRY_PI_VAN_HANH_VI.md).
 
@@ -110,11 +113,12 @@ Kiểm tra Python nhìn thấy GPIO Zero:
 uv run python -c "from gpiozero import Button; print('gpiozero OK')"
 ```
 
-GPIO Zero cần một pin factory có quyền đọc/ghi `/dev/gpiochip*`. Nếu gặp
-`BadPinFactory`, cài backend `lgpio` vào môi trường dự án rồi kiểm tra lại:
+GPIO Zero cần một pin factory có quyền đọc/ghi `/dev/gpiochip*`. Pi 5 cần
+backend `lgpio` và, khi cài qua pip, `gpiozero` từ `2.0.1.post1`. Nếu gặp
+`BadPinFactory`, cài lớp tương thích vào môi trường dự án rồi kiểm tra lại:
 
 ```bash
-uv pip install lgpio
+uv pip install 'gpiozero>=2.0.1.post1' lgpio
 GPIOZERO_PIN_FACTORY=lgpio uv run python -c "from gpiozero import Button; b=Button(17); print('GPIO OK'); b.close()"
 ```
 
@@ -209,8 +213,9 @@ uv run device_reader.py \
   Đang xử lý câu hỏi”, rồi mới chạy STT và tạo câu trả lời.
 - Khi có kết quả: báo “Bắt đầu trả lời”, đọc câu trả lời, rồi báo “Đã trả lời
   xong”.
-- Câu trả lời chỉ dựa trên văn bản gốc đã đọc. Nếu nguồn không đủ, hệ thống phải
-  nói rõ thay vì suy đoán.
+- Hệ thống tìm từ khóa/chủ đề trong toàn bộ văn bản gốc đã đọc và
+  tổng hợp chi tiết liên quan dù chúng nằm ở các đoạn khác nhau. Nếu nguồn
+  không đủ, hệ thống phải nói rõ thay vì dùng kiến thức ngoài hoặc suy đoán.
 - Mỗi câu hỏi độc lập; câu hỏi và câu trả lời trước không được gửi lại model.
 - Sau câu trả lời, Button 1 đọc tiếp; Button 2 tạo summary; Button 3 bắt đầu câu
   hỏi mới.
